@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>stemplay</title>
+<style>
+:root {
+  --bg: #f5efe8;
+  --surface: #ebe3d9;
+  --text: #2a2520;
+  --accent: #8b6f47;
+  --muted: #a89580;
+  --border: #d9cfc2;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  padding: 3rem 1.5rem;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.container { max-width: 720px; margin: 0 auto; }
+h1 {
+  font-weight: 300;
+  font-size: 1.75rem;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.25rem;
+}
+.sub {
+  color: var(--muted);
+  font-size: 0.85rem;
+  letter-spacing: 0.05em;
+  margin-bottom: 2.5rem;
+}
+.drop-zone {
+  border: 1.5px dashed var(--border);
+  border-radius: 0.75rem;
+  padding: 2.5rem 1.5rem;
+  text-align: center;
+  color: var(--muted);
+  transition: all 0.2s ease;
+  cursor: pointer;
+  display: block;
+}
+.drop-zone:hover, .drop-zone.active {
+  background: var(--surface);
+  border-color: var(--accent);
+  color: var(--text);
+}
+.drop-zone input { display: none; }
+
+.stems {
+  margin-top: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.stem {
+  background: var(--surface);
+  border-radius: 0.6rem;
+  padding: 0.85rem 1.1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+.stem .name {
+  flex: 1;
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stem button {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 0.4rem;
+  padding: 0.3rem 0.65rem;
+  cursor: pointer;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+  transition: all 0.15s;
+  min-width: 2rem;
+}
+.stem button:hover { color: var(--text); border-color: var(--muted); }
+.stem button.active {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+.stem input[type=range] {
+  width: 100px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.controls {
+  margin-top: 1.5rem;
+  background: var(--surface);
+  border-radius: 0.6rem;
+  padding: 1rem 1.2rem;
+  display: none;
+}
+.controls.visible { display: block; }
+.playbar {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+.playbar .play {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  cursor: pointer;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.1s;
+}
+.playbar .play:hover { transform: scale(1.05); }
+.playbar .time {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8rem;
+  color: var(--muted);
+  min-width: 2.5rem;
+}
+.playbar input[type=range] {
+  flex: 1;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.clear {
+  margin-top: 1rem;
+  text-align: right;
+}
+.clear button {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+}
+.clear button:hover { color: var(--text); }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>stemplay</h1>
+  <div class="sub">drag stems to play together</div>
+  <label class="drop-zone" id="drop">
+    <div>drop audio files here, or click to select</div>
+    <input type="file" id="files" multiple accept="audio/*">
+  </label>
+  <div class="stems" id="stems"></div>
+  <div class="controls" id="controls">
+    <div class="playbar">
+      <button class="play" id="playBtn">▶</button>
+      <span class="time" id="curTime">0:00</span>
+      <input type="range" id="seek" min="0" max="100" value="0" step="0.01">
+      <span class="time" id="totTime">0:00</span>
+    </div>
+    <div class="clear"><button id="clearBtn">clear all</button></div>
+  </div>
+</div>
+<script>
+const ctx = new (window.AudioContext || window.webkitAudioContext)();
+const stems = [];
+let isPlaying = false;
+let startTime = 0;
+let pauseOffset = 0;
+let duration = 0;
+
+const $ = id => document.getElementById(id);
+const drop = $('drop'), filesInput = $('files'), stemsEl = $('stems'), controls = $('controls');
+const playBtn = $('playBtn'), seek = $('seek'), curTime = $('curTime'), totTime = $('totTime');
+const clearBtn = $('clearBtn');
+
+const fmt = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
+
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('active'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('active'));
+drop.addEventListener('drop', e => {
+  e.preventDefault();
+  drop.classList.remove('active');
+  handleFiles(e.dataTransfer.files);
+});
+filesInput.addEventListener('change', e => handleFiles(e.target.files));
+
+async function handleFiles(files) {
+  for (const f of files) {
+    if (!f.type.startsWith('audio/')) continue;
+    try {
+      const ab = await f.arrayBuffer();
+      const buf = await ctx.decodeAudioData(ab);
+      duration = Math.max(duration, buf.duration);
+      const gain = ctx.createGain();
+      gain.connect(ctx.destination);
+      const stem = { name: f.name, buffer: buf, gain, volume: 1, muted: false, solo: false, source: null };
+      stems.push(stem);
+      renderStem(stem);
+    } catch (err) {
+      console.error('failed to decode', f.name, err);
+    }
+  }
+  totTime.textContent = fmt(duration);
+  seek.max = duration;
+  controls.classList.add('visible');
+}
+
+function renderStem(stem) {
+  const el = document.createElement('div');
+  el.className = 'stem';
+  const displayName = stem.name.replace(/\.[^.]+$/, '');
+  el.innerHTML = `
+    <span class="name">${displayName}</span>
+    <button data-act="solo">S</button>
+    <button data-act="mute">M</button>
+    <input type="range" min="0" max="1" step="0.01" value="1">
+  `;
+  const btnSolo = el.querySelector('[data-act=solo]');
+  const btnMute = el.querySelector('[data-act=mute]');
+  const vol = el.querySelector('input[type=range]');
+  btnSolo.onclick = () => { stem.solo = !stem.solo; btnSolo.classList.toggle('active'); updateGains(); };
+  btnMute.onclick = () => { stem.muted = !stem.muted; btnMute.classList.toggle('active'); updateGains(); };
+  vol.oninput = e => { stem.volume = +e.target.value; updateGains(); };
+  stem._el = el;
+  stemsEl.appendChild(el);
+}
+
+function updateGains() {
+  const hasSolo = stems.some(s => s.solo);
+  for (const s of stems) {
+    const active = hasSolo ? s.solo : !s.muted;
+    s.gain.gain.value = active ? s.volume : 0;
+  }
+}
+
+function startAll(offset) {
+  stopAll(false);
+  for (const s of stems) {
+    const src = ctx.createBufferSource();
+    src.buffer = s.buffer;
+    src.connect(s.gain);
+    src.start(0, Math.min(offset, s.buffer.duration));
+    s.source = src;
+  }
+  startTime = ctx.currentTime - offset;
+  isPlaying = true;
+  playBtn.textContent = '❚❚';
+}
+
+function stopAll(updateUI = true) {
+  for (const s of stems) {
+    if (s.source) { try { s.source.stop(); } catch {} s.source = null; }
+  }
+  isPlaying = false;
+  if (updateUI) playBtn.textContent = '▶';
+}
+
+playBtn.onclick = () => {
+  if (!stems.length) return;
+  ctx.resume();
+  if (isPlaying) {
+    pauseOffset = ctx.currentTime - startTime;
+    stopAll();
+  } else {
+    startAll(pauseOffset);
+  }
+};
+
+seek.oninput = () => {
+  pauseOffset = +seek.value;
+  curTime.textContent = fmt(pauseOffset);
+  if (isPlaying) startAll(pauseOffset);
+};
+
+clearBtn.onclick = () => {
+  stopAll();
+  stems.forEach(s => s.gain.disconnect());
+  stems.length = 0;
+  stemsEl.innerHTML = '';
+  duration = 0;
+  pauseOffset = 0;
+  seek.value = 0;
+  curTime.textContent = '0:00';
+  totTime.textContent = '0:00';
+  controls.classList.remove('visible');
+};
+
+setInterval(() => {
+  if (isPlaying) {
+    const t = ctx.currentTime - startTime;
+    if (t >= duration) {
+      pauseOffset = 0;
+      stopAll();
+      seek.value = 0;
+      curTime.textContent = '0:00';
+      return;
+    }
+    seek.value = t;
+    curTime.textContent = fmt(t);
+  }
+}, 100);
+</script>
+</body>
+</html>
