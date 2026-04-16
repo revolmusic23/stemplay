@@ -109,6 +109,18 @@ h1 {
   accent-color: var(--accent);
   cursor: pointer;
 }
+.stem button.remove {
+  border: none;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0.25rem 0.5rem;
+  min-width: auto;
+}
+.stem button.remove:hover {
+  color: #b85c4a;
+  border: none;
+}
 
 .controls {
   margin-top: 1.5rem;
@@ -264,6 +276,7 @@ const SHORTCUTS = [
   { keys: ['-', '='], desc: 'master vol' },
   { keys: ['m'], desc: 'mute' },
   { keys: ['s'], desc: 'solo' },
+  { keys: ['x'], desc: 'remove track' },
 ];
 $('shortcuts').innerHTML = SHORTCUTS.map(({ keys, desc }) =>
   `<span>${keys.map(k => `<kbd>${k}</kbd>`).join('')} ${desc}</span>`
@@ -359,12 +372,15 @@ function renderStem(stem) {
     <button data-act="solo">S</button>
     <button data-act="mute">M</button>
     <input type="range" min="0" max="1" step="0.01" value="1">
+    <button class="remove" data-act="remove" title="remove track">×</button>
   `;
   const btnSolo = el.querySelector('[data-act=solo]');
   const btnMute = el.querySelector('[data-act=mute]');
+  const btnRemove = el.querySelector('[data-act=remove]');
   const vol = el.querySelector('input[type=range]');
   btnSolo.onclick = () => { stem.solo = !stem.solo; btnSolo.classList.toggle('active'); updateGains(); };
   btnMute.onclick = () => { stem.muted = !stem.muted; btnMute.classList.toggle('active'); updateGains(); };
+  btnRemove.onclick = e => { e.stopPropagation(); removeStem(stem); };
   vol.oninput = e => { stem.volume = +e.target.value; updateGains(); };
   el.onclick = () => setFocus(stems.indexOf(stem));
   stem._el = el;
@@ -379,6 +395,48 @@ function updateGains() {
   for (const s of stems) {
     const active = hasSolo ? s.solo : !s.muted;
     s.gain.gain.value = active ? s.volume : 0;
+  }
+}
+
+function removeStem(stem) {
+  const idx = stems.indexOf(stem);
+  if (idx < 0) return;
+
+  if (stem.source) { try { stem.source.stop(); } catch {} stem.source = null; }
+  stem.gain.disconnect();
+  stems.splice(idx, 1);
+  stem._el.remove();
+
+  // renumber remaining focus-idx labels
+  stems.forEach((s, i) => {
+    const fi = s._el.querySelector('.focus-idx');
+    if (fi) fi.textContent = i + 1;
+  });
+
+  // adjust focusedIdx
+  if (!stems.length) {
+    focusedIdx = -1;
+  } else if (idx === focusedIdx) {
+    focusedIdx = Math.min(idx, stems.length - 1);
+    stems[focusedIdx]._el.classList.add('focused');
+  } else if (idx < focusedIdx) {
+    focusedIdx--;
+  }
+
+  // recompute duration
+  duration = stems.reduce((m, s) => Math.max(m, s.buffer.duration), 0);
+  totTime.textContent = fmt(duration);
+  seek.max = duration || 100;
+
+  if (!stems.length) {
+    stopAll();
+    pauseOffset = 0;
+    seek.value = 0;
+    curTime.textContent = '0:00';
+    totTime.textContent = '0:00';
+    controls.classList.remove('visible');
+  } else {
+    updateGains();
   }
 }
 
@@ -495,12 +553,12 @@ document.addEventListener('keydown', e => {
   const fs = stems[focusedIdx];
   if (e.key === 'l') {
     e.preventDefault();
-    fs.volume = Math.min(fs.volume + 0.05, 1);
+    fs.volume = Math.min(fs.volume + 0.1, 1);
     fs._volEl.value = fs.volume;
     updateGains();
   } else if (e.key === 'h') {
     e.preventDefault();
-    fs.volume = Math.max(fs.volume - 0.05, 0);
+    fs.volume = Math.max(fs.volume - 0.1, 0);
     fs._volEl.value = fs.volume;
     updateGains();
   } else if (e.key === 'm') {
@@ -513,6 +571,9 @@ document.addEventListener('keydown', e => {
     fs.solo = !fs.solo;
     fs._soloBtn.classList.toggle('active', fs.solo);
     updateGains();
+  } else if (e.key === 'x') {
+    e.preventDefault();
+    removeStem(fs);
   }
 });
 
