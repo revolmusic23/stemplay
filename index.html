@@ -187,12 +187,31 @@ h1 {
   padding: 0.25rem 0.5rem;
 }
 .clear button:hover { color: var(--text); }
+.shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.2rem;
+  margin-bottom: 2rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.shortcuts span { display: flex; align-items: center; gap: 0.3rem; }
+kbd {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.3rem;
+  padding: 0.1rem 0.4rem;
+  font-family: inherit;
+  font-size: 0.7rem;
+  color: var(--text);
+}
 </style>
 </head>
 <body>
 <div class="container">
   <h1>stemplay</h1>
   <div class="sub">drag stems to play together</div>
+  <div class="shortcuts" id="shortcuts"></div>
   <label class="drop-zone" id="drop">
     <div>drop audio files here, or click to select</div>
     <input type="file" id="files" multiple accept="audio/*">
@@ -235,6 +254,21 @@ let duration = 0;
 let focusedIdx = -1;
 
 const $ = id => document.getElementById(id);
+
+const SHORTCUTS = [
+  { keys: ['space'], desc: 'play/pause' },
+  { keys: ['0', '1–9'], desc: 'seek' },
+  { keys: ['←', '→'], desc: '±5s' },
+  { keys: ['j', 'k'], desc: 'focus track' },
+  { keys: ['h', 'l'], desc: 'track vol' },
+  { keys: ['-', '='], desc: 'master vol' },
+  { keys: ['m'], desc: 'mute' },
+  { keys: ['s'], desc: 'solo' },
+];
+$('shortcuts').innerHTML = SHORTCUTS.map(({ keys, desc }) =>
+  `<span>${keys.map(k => `<kbd>${k}</kbd>`).join('')} ${desc}</span>`
+).join('');
+
 const drop = $('drop'), filesInput = $('files'), stemsEl = $('stems'), controls = $('controls');
 const playBtn = $('playBtn'), seek = $('seek'), curTime = $('curTime'), totTime = $('totTime');
 const clearBtn = $('clearBtn');
