@@ -66,6 +66,18 @@ h1 {
   display: flex;
   align-items: center;
   gap: 0.9rem;
+  cursor: pointer;
+}
+.stem.focused {
+  outline: 1.5px solid var(--accent);
+  background: var(--bg);
+}
+.stem .focus-idx {
+  font-size: 0.7rem;
+  color: var(--muted);
+  min-width: 1rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 .stem .name {
   flex: 1;
@@ -104,8 +116,10 @@ h1 {
   border-radius: 0.6rem;
   padding: 1rem 1.2rem;
   display: none;
+  gap: 0.75rem;
+  flex-direction: column;
 }
-.controls.visible { display: block; }
+.controls.visible { display: flex; }
 .playbar {
   display: flex;
   align-items: center;
@@ -124,6 +138,7 @@ h1 {
   align-items: center;
   justify-content: center;
   transition: transform 0.1s;
+  flex-shrink: 0;
 }
 .playbar .play:hover { transform: scale(1.05); }
 .playbar .time {
@@ -137,8 +152,29 @@ h1 {
   accent-color: var(--accent);
   cursor: pointer;
 }
+.masterbar {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+.masterbar label {
+  font-size: 0.75rem;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  min-width: 3.5rem;
+}
+.masterbar input[type=range] {
+  width: 120px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.masterbar .master-val {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 2.5rem;
+}
 .clear {
-  margin-top: 1rem;
   text-align: right;
 }
 .clear button {
@@ -169,23 +205,49 @@ h1 {
       <input type="range" id="seek" min="0" max="100" value="0" step="0.01">
       <span class="time" id="totTime">0:00</span>
     </div>
+    <div class="masterbar">
+      <label>master vol</label>
+      <input type="range" id="masterVol" min="0" max="1" step="0.01" value="1">
+      <span class="master-val" id="masterValDisplay">100%</span>
+    </div>
     <div class="clear"><button id="clearBtn">clear all</button></div>
   </div>
 </div>
 <script>
+// DEV: 填檔名自動載入（需跑 local HTTP server，e.g. python3 -m http.server 8080）
+// 音檔放在同目錄下即可
+const DEV_STEMS = [
+  // 'vocals.mp3',
+  // 'drums.mp3',
+  // 'bass.mp3',
+  // 'other.mp3',
+];
+
 const ctx = new (window.AudioContext || window.webkitAudioContext)();
+const masterGain = ctx.createGain();
+masterGain.connect(ctx.destination);
+
 const stems = [];
 let isPlaying = false;
 let startTime = 0;
 let pauseOffset = 0;
 let duration = 0;
+let focusedIdx = -1;
 
 const $ = id => document.getElementById(id);
 const drop = $('drop'), filesInput = $('files'), stemsEl = $('stems'), controls = $('controls');
 const playBtn = $('playBtn'), seek = $('seek'), curTime = $('curTime'), totTime = $('totTime');
 const clearBtn = $('clearBtn');
+const masterVolEl = $('masterVol'), masterValDisplay = $('masterValDisplay');
 
 const fmt = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
+const pct = v => `${Math.round(v * 100)}%`;
+
+// master volume
+masterVolEl.oninput = () => {
+  masterGain.gain.value = +masterVolEl.value;
+  masterValDisplay.textContent = pct(+masterVolEl.value);
+};
 
 drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('active'); });
 drop.addEventListener('dragleave', () => drop.classList.remove('active'));
@@ -204,7 +266,7 @@ async function handleFiles(files) {
       const buf = await ctx.decodeAudioData(ab);
       duration = Math.max(duration, buf.duration);
       const gain = ctx.createGain();
-      gain.connect(ctx.destination);
+      gain.connect(masterGain);
       const stem = { name: f.name, buffer: buf, gain, volume: 1, muted: false, solo: false, source: null };
       stems.push(stem);
       renderStem(stem);
@@ -215,13 +277,50 @@ async function handleFiles(files) {
   totTime.textContent = fmt(duration);
   seek.max = duration;
   controls.classList.add('visible');
+  if (focusedIdx === -1) setFocus(0);
+}
+
+async function handleUrls(urls) {
+  for (const url of urls) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
+      const ab = await res.arrayBuffer();
+      const buf = await ctx.decodeAudioData(ab);
+      duration = Math.max(duration, buf.duration);
+      const gain = ctx.createGain();
+      gain.connect(masterGain);
+      const name = url.split('/').pop();
+      const stem = { name, buffer: buf, gain, volume: 1, muted: false, solo: false, source: null };
+      stems.push(stem);
+      renderStem(stem);
+    } catch (err) {
+      console.error('failed to load', url, err);
+    }
+  }
+  if (!stems.length) return;
+  totTime.textContent = fmt(duration);
+  seek.max = duration;
+  controls.classList.add('visible');
+  if (focusedIdx === -1) setFocus(0);
+}
+
+function setFocus(idx) {
+  if (idx < 0 || idx >= stems.length) return;
+  if (focusedIdx >= 0 && stems[focusedIdx]._el)
+    stems[focusedIdx]._el.classList.remove('focused');
+  focusedIdx = idx;
+  if (stems[focusedIdx]._el)
+    stems[focusedIdx]._el.classList.add('focused');
 }
 
 function renderStem(stem) {
   const el = document.createElement('div');
   el.className = 'stem';
   const displayName = stem.name.replace(/\.[^.]+$/, '');
+  const idx = stems.indexOf(stem);
   el.innerHTML = `
+    <span class="focus-idx">${idx + 1}</span>
     <span class="name">${displayName}</span>
     <button data-act="solo">S</button>
     <button data-act="mute">M</button>
@@ -233,7 +332,11 @@ function renderStem(stem) {
   btnSolo.onclick = () => { stem.solo = !stem.solo; btnSolo.classList.toggle('active'); updateGains(); };
   btnMute.onclick = () => { stem.muted = !stem.muted; btnMute.classList.toggle('active'); updateGains(); };
   vol.oninput = e => { stem.volume = +e.target.value; updateGains(); };
+  el.onclick = () => setFocus(stems.indexOf(stem));
   stem._el = el;
+  stem._volEl = vol;
+  stem._muteBtn = btnMute;
+  stem._soloBtn = btnSolo;
   stemsEl.appendChild(el);
 }
 
@@ -267,6 +370,14 @@ function stopAll(updateUI = true) {
   if (updateUI) playBtn.textContent = '▶';
 }
 
+function seekTo(t) {
+  t = Math.max(0, Math.min(t, duration));
+  pauseOffset = t;
+  seek.value = t;
+  curTime.textContent = fmt(t);
+  if (isPlaying) startAll(t);
+}
+
 playBtn.onclick = () => {
   if (!stems.length) return;
   ctx.resume();
@@ -291,11 +402,85 @@ clearBtn.onclick = () => {
   stemsEl.innerHTML = '';
   duration = 0;
   pauseOffset = 0;
+  focusedIdx = -1;
   seek.value = 0;
   curTime.textContent = '0:00';
   totTime.textContent = '0:00';
   controls.classList.remove('visible');
 };
+
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+
+  // play/pause
+  if (e.key === ' ') { e.preventDefault(); playBtn.click(); return; }
+
+  // seek: 0 → start, 1-9 → 10%-90%
+  if (e.key === '0') { e.preventDefault(); seekTo(0); return; }
+  if (e.key >= '1' && e.key <= '9') {
+    e.preventDefault();
+    seekTo(duration * parseInt(e.key) / 10);
+    return;
+  }
+
+  // seek: arrow keys ±5s
+  if (e.key === 'ArrowRight') {
+    e.preventDefault();
+    seekTo((isPlaying ? ctx.currentTime - startTime : pauseOffset) + 5);
+    return;
+  }
+  if (e.key === 'ArrowLeft') {
+    e.preventDefault();
+    seekTo((isPlaying ? ctx.currentTime - startTime : pauseOffset) - 5);
+    return;
+  }
+
+  // master volume: - / =
+  if (e.key === '=') {
+    e.preventDefault();
+    masterGain.gain.value = Math.min(masterGain.gain.value + 0.05, 1);
+    masterVolEl.value = masterGain.gain.value;
+    masterValDisplay.textContent = pct(masterGain.gain.value);
+    return;
+  }
+  if (e.key === '-') {
+    e.preventDefault();
+    masterGain.gain.value = Math.max(masterGain.gain.value - 0.05, 0);
+    masterVolEl.value = masterGain.gain.value;
+    masterValDisplay.textContent = pct(masterGain.gain.value);
+    return;
+  }
+
+  // track navigation
+  if (!stems.length) return;
+  if (e.key === 'j') { e.preventDefault(); setFocus(Math.min(focusedIdx + 1, stems.length - 1)); return; }
+  if (e.key === 'k') { e.preventDefault(); setFocus(Math.max(focusedIdx - 1, 0)); return; }
+
+  // focused track ops
+  if (focusedIdx < 0) return;
+  const fs = stems[focusedIdx];
+  if (e.key === 'l') {
+    e.preventDefault();
+    fs.volume = Math.min(fs.volume + 0.05, 1);
+    fs._volEl.value = fs.volume;
+    updateGains();
+  } else if (e.key === 'h') {
+    e.preventDefault();
+    fs.volume = Math.max(fs.volume - 0.05, 0);
+    fs._volEl.value = fs.volume;
+    updateGains();
+  } else if (e.key === 'm') {
+    e.preventDefault();
+    fs.muted = !fs.muted;
+    fs._muteBtn.classList.toggle('active', fs.muted);
+    updateGains();
+  } else if (e.key === 's') {
+    e.preventDefault();
+    fs.solo = !fs.solo;
+    fs._soloBtn.classList.toggle('active', fs.solo);
+    updateGains();
+  }
+});
 
 setInterval(() => {
   if (isPlaying) {
@@ -311,6 +496,9 @@ setInterval(() => {
     curTime.textContent = fmt(t);
   }
 }, 100);
+
+// dev auto-load
+if (DEV_STEMS.length) handleUrls(DEV_STEMS);
 </script>
 </body>
 </html>
